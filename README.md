@@ -12,6 +12,7 @@ All art assets are created by me, or were found on <a href="https://opengameart.
 
 <b>To Do List:</b><br>
 - Music and Sound Effects<br>
+- Computed Grade<br>
 - Better Artwork<br>
 - Better 'Story' Scene<br>
 
