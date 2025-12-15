@@ -4,7 +4,13 @@ This is a port of "Tobu Tobu Girl" for the NES.  Links to the original game can 
 
 All art assets are created by me, or were found on <a href="https://opengameart.org/">OpenGameArt</a> and were CC0 (aka Public Domain).<br>
 
-<b>To Do List:</b>
+<b>Controls:</b><br>
+- A = Forward (in menu), Dash and Stomp (in play)<br>
+- B = Forward (in menu), Fly (in play)<br>
+- Start = Go Back<br>
+- Select = Change Character<br>
+
+<b>To Do List:</b><br>
 - Music and Sound Effects<br>
 - Better Artwork<br>
 - Better 'Story' Scene<br>
