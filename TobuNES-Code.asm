@@ -3892,7 +3892,7 @@ score_shift_one
 	; grade
 	PLA
 	TAX
-	LDA #$00 ; this needs computation
+	LDA #$27 ; this needs computation
 	STA score_page+0,X
 
 	; space
