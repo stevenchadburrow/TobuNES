@@ -6,6 +6,8 @@ All art assets are created by me, or were found on <a href="https://opengameart.
 
 To assemble the code, I am using Loopy's "asm6", found on <a href="https://www.nesdev.org/wiki/Tools">NesDev Tools</a>.  The included Combiner and Converter are what I use after the assembler to compile the ROM.  The included Composer converts BMP 'songs' into HEX for use in the game.  I use my own <a href="https://github.com/stevenchadburrow/PICnes">PICnes Emulator</a>, as well as "Mesen", for testing.<br> 
 
+<a href="https://stevenchadburrow.itch.io/tobu-nes">Link to this game on itch.io</a><br>
+
 <b>Controls:</b><br>
 - A = Forward (in menu), Dash and Stomp (in play)<br>
 - B = Forward (in menu), Fly (in play)<br>
