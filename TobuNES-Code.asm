@@ -2184,8 +2184,6 @@ redraw_enemies_four
 	STA oam_page+10,X
 	STA oam_page+14,X
 	LDA ext_x
-	CLC
-	ADC #$01 ; why do I have to add one?
 	STA oam_page+3,X
 	STA oam_page+11,X
 	CLC
@@ -3439,11 +3437,12 @@ menu_move_five
 	CPX #$30
 	BNE menu_move_five
 
+	; x-pos of the extra kitty sprites
 	LDX #$20
-	LDA #$19 ; why do I have to add one here?
+	LDA #$18
 	STA oam_page+3,X
 	STA oam_page+11,X
-	LDA #$21 ; why do I have to add one here?
+	LDA #$20
 	STA oam_page+7,X
 	STA oam_page+15,X
 	
