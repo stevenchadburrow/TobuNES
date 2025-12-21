@@ -4,7 +4,7 @@ This is a port of "Tobu Tobu Girl" for the NES.  Links to the original game can 
 
 All art assets are created by me, or were found on <a href="https://opengameart.org/">OpenGameArt</a> and were CC0 (aka Public Domain).<br>
 
-To assemble the code, I am using Loopy's "asm6", found on <a href="https://www.nesdev.org/wiki/Tools">NesDev Tools</a>.  The included Combiner and Converter are what I use after the assembler to compile the ROM.  I use my own <a href="https://github.com/stevenchadburrow/PICnes">PICnes Emulator</a> for testing.<br> 
+To assemble the code, I am using Loopy's "asm6", found on <a href="https://www.nesdev.org/wiki/Tools">NesDev Tools</a>.  The included Combiner and Converter are what I use after the assembler to compile the ROM.  I use my own <a href="https://github.com/stevenchadburrow/PICnes">PICnes Emulator</a> for testing.  The included Composer converts BMP 'songs' into HEX for use in the game.<br> 
 
 <b>Controls:</b><br>
 - A = Forward (in menu), Dash and Stomp (in play)<br>
@@ -13,9 +13,7 @@ To assemble the code, I am using Loopy's "asm6", found on <a href="https://www.n
 - Select = Change Character<br>
 
 <b>To Do List:</b><br>
-- Music and Sound Effects<br>
 - Computed Grade<br>
-- Better Artwork<br>
 - Better 'Story' Scene<br>
 
 <b>Pictures:</b><br>
