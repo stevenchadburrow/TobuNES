@@ -19,6 +19,7 @@ To assemble the code, I am using Loopy's "asm6", found on <a href="https://www.n
 - Better 'Story' Scene<br>
 
 <b>Pictures:</b><br>
+<img src="TobuNES-Cover.png"><br>
 <img src="TobuNES-Menu.png"><br>
 <img src="TobuNES-Play1.png"><br>
 <img src="TobuNES-Play2.png"><br>
