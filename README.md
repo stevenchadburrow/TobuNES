@@ -1,6 +1,6 @@
 <b><h1>TobuNES</h1></b>
 
-This is a port of "Tobu Tobu Girl" for the NES.  Links to the original game can be found on <a href="https://github.com/SimonLarsen/tobutobugirl-dx">GitHub</a> and <a href="https://tangramgames.itch.io/tobu-tobu-girl-deluxe">Itch-IO</a>.<br>
+This is a port of "Tobu Tobu Girl" for the NES.  Links to the original game can be found on <a href="https://github.com/SimonLarsen/tobutobugirl-dx">GitHub</a> and <a href="https://tangramgames.itch.io/tobu-tobu-girl-deluxe">itch.io</a>.<br>
 
 All art assets are created by me, or were found on <a href="https://opengameart.org/">OpenGameArt</a> and were CC0 (aka Public Domain).<br>
 
