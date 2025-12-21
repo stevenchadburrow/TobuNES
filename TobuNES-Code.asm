@@ -126,6 +126,37 @@ enem_pal .EQU $70 ; uses 16 bytes
 
 str_array .EQU $80 ; uses 16 bytes
 
+aud_func_1 .EQU $90 ; uses 10 bytes
+aud_low_1 .EQU $91
+aud_high_1 .EQU $92
+
+aud_func_2 .EQU $9A ; uses 10 bytes
+aud_low_2 .EQU $9B
+aud_high_2 .EQU $9C
+
+aud_func_t .EQU $A4 ; uses 10 bytes
+aud_low_t .EQU $A5
+aud_high_t .EQU $A6
+
+aud_func_n .EQU $AE ; uses 10 bytes
+aud_low_n .EQU $AF
+aud_high_n .EQU $B0
+
+aud_halt .EQU $B8
+aud_once .EQU $B9
+aud_mul .EQU $BA
+aud_curr .EQu $BB
+aud_cnt_low_1 .EQU $BC
+aud_cnt_high_1 .EQU $BD
+aud_cnt_low_2 .EQU $BE
+aud_cnt_high_2 .EQU $BF
+aud_cnt_low_t .EQU $C0
+aud_cnt_high_t .EQU $C1
+aud_cnt_low_n .EQU $C2
+aud_cnt_high_n .EQU $C3
+
+aud_sfx .EQU $C4
+
 ; add more variables here
 
 oam_page .EQU $0200 ; sprite oam data ready for dma
@@ -134,6 +165,7 @@ enem_page .EQU $0300 ; oam, x, y, chr, x-dir, pal, x-vel, x-sway
 
 score_page .EQU $0400 ; grade, space, score_high, score_low, space, time_high, colon, time_low, space, space, space, end. repeat 16x
 
+
 ppu_ctrl .EQU $2000
 ppu_mask .EQU $2001
 ppu_status .EQU $2002
@@ -141,8 +173,26 @@ ppu_scroll .EQU $2005
 ppu_addr .EQU $2006
 ppu_data .EQU $2007
 
+aud_pul1_ctrl .EQU $4000
+aud_pul1_sweep .EQU $4001
+aud_pul1_timer .EQU $4002
+aud_pul1_len .EQU $4003
+
+aud_pul2_ctrl .EQU $4004
+aud_pul2_sweep .EQU $4005
+aud_pul2_timer .EQU $4006
+aud_pul2_len .EQU $4007
+
+aud_tri_ctrl .EQU $4008
+aud_tri_timer .EQU $400A
+aud_tri_len .EQU $400B
+
+aud_nois_ctrl .EQU $400C
+aud_nois_timer .EQU $400E
+aud_nois_len .EQU $400F
+
 oam_dma .EQU $4014
-snd_chn .EQU $4015
+aud_status .EQU $4015
 joy_one .EQU $4016
 joy_two .EQU $4017
 
@@ -158,6 +208,14 @@ reset
 	; set stack pointer
 	LDX #$FF
 	TXS
+
+	; disable rendering
+	LDA #$00
+	STA ppu_ctrl
+	STA ppu_mask
+
+	; initialize audio variables
+	JSR audio_init
 
 	; randomizer function creation
 	LDA #$A5 ; LDAz
@@ -190,13 +248,6 @@ reset
 	JSR rand_func
 	JSR rand_func
 
-	; disable rendering
-	LDA #$00
-	STA ppu_ctrl
-	STA ppu_mask
-	LDA #$00
-	STA snd_chn
-
 	; wait for two v-blank flags
 	BIT ppu_status
 reset_wait_one
@@ -207,9 +258,9 @@ reset_wait_two
 	BPL reset_wait_two
 
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -218,6 +269,12 @@ reset_wait_two
 	; trigger oam dma
 	LDA #$02
 	STA oam_dma
+
+	; uncomment if you want to just test the audio
+	;JSR audio_debug
+
+	; uncomment if you want to just test the sound effects
+	;JSR sound_debug
 
 	; reset menu position, wait state, and progress
 	LDA #$00
@@ -260,13 +317,23 @@ reset_score_two
 	STA ppu_mask
 
 story
+	; stop song
+	JSR audio_pause
+
 	; wipe effect
 	LDA #$2C
 	STA wipe_tile
 	JSR wipe
 
+	; use song 1
+	LDA #$00
+	JSR audio_start
+
 	; story scene
 	JSR scene
+
+	; stop song
+	JSR audio_pause
 
 	; wipe effect
 	LDA #$2C
@@ -277,14 +344,24 @@ story
 	JMP boot_fast
 
 boot
+	; stop song
+	JSR audio_pause
+
 	; wipe effect
 	LDA #$2C
 	STA wipe_tile
 	JSR wipe
 
 boot_fast
+	; use song 2
+	LDA #$01
+	JSR audio_start
+
 	; title menu screen
 	JSR menu
+
+	; stop song
+	JSR audio_pause
 
 	; wipe effect
 	LDA #$FF
@@ -295,6 +372,12 @@ boot_fast
 	LDA #$00
 	STA map_prev_low
 	STA map_prev_high
+
+	; use song 3+, and pause
+	LDA menu_pos
+	CLC
+	ADC #$02
+	JSR audio_start
 
 init
 	; disable rendering
@@ -351,21 +434,41 @@ main_next_one
 	LDA #$02
 	STA oam_dma
 
-	; time keeping
+	; check to pause audio
+	LDA char_intro
+	BNE main_next_two
+	LDA char_death
+	BNE main_next_two
 	LDA char_fin
 	BNE main_next_two
+
+	; unpause audio
+	JSR audio_unpause
+
+	; play audio
+	JSR audio_play
+	JMP main_next_three
+
+main_next_two
+	; pause audio
+	JSR audio_pause
+
+main_next_three
+	; time keeping
+	LDA char_fin
+	BNE main_next_four
 	INC time_low
 	LDA time_low
 	CMP #$3C ; 60 Hz
-	BCC main_next_two
+	BCC main_next_four
 	LDA #$00
 	STA time_low
 	INC time_high ; measured in seconds
 
-main_next_two
+main_next_four
 	; animate enemies
 	DEC anim_cnt
-	BNE main_next_four
+	BNE main_next_six
 	LDA #$07
 	STA anim_cnt
 	INC anim_val
@@ -378,25 +481,32 @@ main_next_two
 	SEC
 	SBC #$01
 	STA char_fly_val
-	BCS main_next_three
+	BCS main_next_five
 	LDA #$00
 	STA char_fly_val
 
-main_next_three
+main_next_five
 	; timer countdown
 	LDA char_death
-	BNE main_next_four
+	BNE main_next_six
 	LDA map_timer
 	SEC
 	SBC #$01 ; timer speed
 	STA map_timer
-	BCS main_next_four
+	BCS main_next_six
 	LDA #$00
 	STA map_timer
 	LDA #$40 ; death length
 	STA char_death
+	LDA #$00
+	STA aud_sfx
+	LDA #$01 ; sound effect 2
+	JSR sound
+	
+	; set position for flags
+	JSR compute_flag_one
 
-main_next_four
+main_next_six
 	; run sub-routines
 	JSR buttons
 	JSR compute
@@ -405,38 +515,38 @@ main_next_four
 	; if pressing select, change skin
 	LDA button_value
 	AND #$20 ; select
-	BEQ main_next_six
+	BEQ main_next_eight
 	LDA char_skin
 	CLC
 	ADC #$20
 	AND #$20
 	STA char_skin
 
-main_next_five
-	; wait until not pressing buttons
-	JSR buttons
-	LDA button_value
-	BNE main_next_five
-	
-	; loop back
-	JMP main
-
-main_next_six
-	; if pressing start, go back to menu
-	LDA button_value
-	AND #$10 ; start
-	BEQ main_next_eight
-
 main_next_seven
 	; wait until not pressing buttons
 	JSR buttons
 	LDA button_value
 	BNE main_next_seven
+	
+	; loop back
+	JMP main
+
+main_next_eight
+	; if pressing start, go back to menu
+	LDA button_value
+	AND #$10 ; start
+	BEQ main_next_ten
+
+main_next_nine
+	; wait until not pressing buttons
+	JSR buttons
+	LDA button_value
+	BNE main_next_nine
 
 	; back to menu
 	JMP boot
 
-main_next_eight
+main_next_ten
 	; turn off display
 	; only for debugging
 	;LDA #$00
@@ -509,9 +619,9 @@ clear_sprites
 	BNE clear_sprites
 
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -811,6 +921,11 @@ setup_clear
 	LDA #$00
 	STA char_fin
 
+	LDA #$00
+	STA aud_sfx
+	LDA #$00 ; sound effect 1
+	JSR sound
+
 	; set map scroll
 	LDA #$18 ; affects where clocks appear
 	STA map_y_low
@@ -1009,6 +1124,10 @@ compute_gravity_three
 	BCC compute_moves_one
 	LDA #$40 ; death length
 	STA char_death
+	LDA #$00
+	STA aud_sfx
+	LDA #$01 ; sound effect 2
+	JSR sound
 	
 compute_flag_one
 	; store position for flag
@@ -1250,6 +1369,10 @@ compute_bounds_three
 	CLC
 	ADC #$20 ; timer bonus
 	STA map_timer
+	LDA #$00
+	STA aud_sfx
+	LDA #$04 ; sound effect 5
+	JSR sound
 	BCC compute_bounds_four
 	LDA #$FF
 	STA map_timer
@@ -1272,32 +1395,38 @@ compute_bounds_five
 compute_bounds_six
 	; check enemy collisions
 	LDA enem_page+0,X
-	BEQ compute_enemies_three
+	BEQ compute_bounds_seven
 	LDA enem_page+2,X
 	SEC
 	SBC #$08
 	SEC
 	SBC char_pos_y
-	BCS compute_enemies_three
+	BCS compute_bounds_seven
 	LDA char_pos_y
 	SEC
 	SBC #$0C
 	SEC
 	SBC enem_page+2,X
-	BCS compute_enemies_three
+	BCS compute_bounds_seven
 	LDA enem_page+1,X
 	SEC
 	SBC #$10
 	SEC
 	SBC char_pos_x
-	BCS compute_enemies_three
+	BCS compute_bounds_seven
 	LDA char_pos_x
 	SEC
 	SBC #$10
 	SEC
 	SBC enem_page+1,X
-	BCS compute_enemies_three
+	BCS compute_bounds_seven
+	JMP compute_bounds_eight
 
+compute_bounds_seven
+	; branch out of range...
+	JMP compute_enemies_three
+
+compute_bounds_eight
 	; check if warp at end of level
 	LDA map_fin
 	BEQ compute_enemies_two
@@ -1305,6 +1434,10 @@ compute_bounds_six
 	BNE compute_enemies_two
 	LDA #$40 ; finish length
 	STA char_fin
+	LDA #$00
+	STA aud_sfx
+	LDA #$00 ; sound effect 1
+	JSR sound
 	LDA menu_pos
 	CMP menu_prog
 	BCC compute_enemies_zero
@@ -1346,6 +1479,10 @@ compute_enemies_two
 	BCC compute_enemies_four
 	LDA #$40 ; death length
 	STA char_death
+	LDA #$00
+	STA aud_sfx
+	LDA #$01 ; sound effect 2
+	JSR sound
 
 	; store position for flag
 	JMP compute_flag_one
@@ -1362,6 +1499,10 @@ compute_enemies_four
 	BNE compute_enemies_five
 	LDA #$40 ; death length
 	STA char_death
+	LDA #$00
+	STA aud_sfx
+	LDA #$01 ; sound effect 2
+	JSR sound
 	
 	; store position for flag
 	JMP compute_flag_one
@@ -1391,6 +1532,8 @@ compute_enemies_five
 	SEC
 	SBC #$08
 	STA cloud_y
+	LDA #$03 ; sound effect 4
+	JSR sound
 
 	; add hit
 	INC pts_hit
@@ -1406,6 +1549,8 @@ compute_enemies_five
 
 compute_enemies_six
 	; bounce character
+	LDA #$02 ; sound effect 3
+	JSR sound
 	LDA #$1E ; high bounce
 	STA char_vel_y
 	LDA char_pos_y
@@ -1458,6 +1603,8 @@ compute_enemies_six
 	SEC
 	SBC #$08
 	STA cloud_y
+	LDA #$03 ; sound effect 4
+	JSR sound
 
 compute_enemies_seven
 	; repeat for all enemies
@@ -2037,6 +2184,8 @@ redraw_enemies_four
 	STA oam_page+10,X
 	STA oam_page+14,X
 	LDA ext_x
+	CLC
+	ADC #$01 ; why do I have to add one?
 	STA oam_page+3,X
 	STA oam_page+11,X
 	CLC
@@ -3096,9 +3245,9 @@ menu_score_one
 	JSR string
 	
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -3107,6 +3256,9 @@ menu_score_one
 	; trigger oam dma
 	LDA #$02
 	STA oam_dma
+
+	; play audio
+	JSR audio_play
 
 	; check for kitty has been captured
 	LDA ext_y
@@ -3279,13 +3431,21 @@ menu_move_five
 	ASL A
 	CLC
 	ADC #$18
-	STA oam_page+3,X
+	CLC
 	INX
 	INX
 	INX
 	INX
 	CPX #$30
 	BNE menu_move_five
+
+	LDX #$20
+	LDA #$19 ; why do I have to add one here?
+	STA oam_page+3,X
+	STA oam_page+11,X
+	LDA #$21 ; why do I have to add one here?
+	STA oam_page+7,X
+	STA oam_page+15,X
 	
 menu_move_six
 	; read button state
@@ -3680,7 +3840,7 @@ title_string_one
 	STA str_array,Y
 	INX
 	INY
-	CPX #$10
+	CPY #$10
 	BNE title_string_one
 	JSR string
 	LDY #$00
@@ -3701,9 +3861,9 @@ title_string_one
 	BNE title_string_one
 	
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -4168,9 +4328,9 @@ scene_sprites
 	STA oam_page+15,X	
 
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -4209,9 +4369,9 @@ scene_loop
 
 scene_next
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -4220,6 +4380,9 @@ scene_next
 	; trigger oam dma
 	LDA #$02
 	STA oam_dma
+
+	; play song
+	JSR audio_play	
 	
 	; check for button press
 	JSR buttons
@@ -4296,6 +4459,9 @@ scene_data
 
 ; wipe effect on whole screen
 wipe
+	LDA #$05 ; sound effect 6
+	JSR sound
+
 	; check wipe tile
 	LDA wipe_tile
 	CMP #$FF
@@ -4359,9 +4525,9 @@ wipe_wait
 	STA ppu_data
 
 	; reset ppu scroll
-	LDA ppu_status
 	LDA #$90
 	STA ppu_ctrl
+	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
 	LDA #$00
@@ -4479,6 +4645,8 @@ wipe_blank_two
 	BNE wipe_blank_two
 
 	; reset ppu scroll
+	LDA #$90
+	STA ppu_ctrl
 	LDA ppu_status
 	LDA #$00
 	STA ppu_scroll
@@ -4528,14 +4696,1392 @@ wipe_jump
 	JMP wipe_loop
 
 
+
+; audio initialization
+audio_init
+	LDX #$13
+@loop
+	LDA audio_init_data,X
+	STA $4000,X
+	DEX
+	BPL @loop
+	
+	LDA #$0E ; enable channels pulse2, triangle, and noise
+	STA aud_status ; address $4015
+	LDA #$C0 ; disable irq
+	STA $4017
+
+	; create audio grabbing function
+	LDA #$AD ; LDAa
+	STA aud_func_1+0
+	LDA #$00
+	STA aud_low_1
+	LDA #$00
+	STA aud_high_1
+	LDA #$E6 ; INCz
+	STA aud_func_1+3
+	LDA #aud_low_1
+	STA aud_func_1+4
+	LDA #$D0 ; BNE
+	STA aud_func_1+5
+	LDA #$02
+	STA aud_func_1+6
+	LDA #$E6 ; INCz
+	STA aud_func_1+7
+	LDA #aud_high_1
+	STA aud_func_1+8
+	LDA #$60 ; RTS
+	STA aud_func_1+9
+
+	LDA #$AD ; LDAa
+	STA aud_func_2+0
+	LDA #$00
+	STA aud_low_2
+	LDA #$00
+	STA aud_high_2
+	LDA #$E6 ; INCz
+	STA aud_func_2+3
+	LDA #aud_low_2
+	STA aud_func_2+4
+	LDA #$D0 ; BNE
+	STA aud_func_2+5
+	LDA #$02
+	STA aud_func_2+6
+	LDA #$E6 ; INCz
+	STA aud_func_2+7
+	LDA #aud_high_2
+	STA aud_func_2+8
+	LDA #$60 ; RTS
+	STA aud_func_2+9
+
+	LDA #$AD ; LDAa
+	STA aud_func_t+0
+	LDA #$00
+	STA aud_low_t
+	LDA #$00
+	STA aud_high_t
+	LDA #$E6 ; INCz
+	STA aud_func_t+3
+	LDA #aud_low_t
+	STA aud_func_t+4
+	LDA #$D0 ; BNE
+	STA aud_func_t+5
+	LDA #$02
+	STA aud_func_t+6
+	LDA #$E6 ; INCz
+	STA aud_func_t+7
+	LDA #aud_high_t
+	STA aud_func_t+8
+	LDA #$60 ; RTS
+	STA aud_func_t+9
+
+	LDA #$AD ; LDAa
+	STA aud_func_n+0
+	LDA #$00
+	STA aud_low_n
+	LDA #$00
+	STA aud_high_n
+	LDA #$E6 ; INCz
+	STA aud_func_n+3
+	LDA #aud_low_n
+	STA aud_func_n+4
+	LDA #$D0 ; BNE
+	STA aud_func_n+5
+	LDA #$02
+	STA aud_func_n+6
+	LDA #$E6 ; INCz
+	STA aud_func_n+7
+	LDA #aud_high_n
+	STA aud_func_n+8
+	LDA #$60 ; RTS
+	STA aud_func_n+9
+
+	; reset sound effects counter
+	LDA #$00
+	STA aud_sfx
+
+	RTS
+
+; initializing audio registers
+audio_init_data
+	.BYTE $30,$08,$00,$00
+	.BYTE $30,$08,$00,$00
+	.BYTE $80,$00,$00,$00
+	.BYTE $30,$00,$00,$00
+	.BYTE $00,$00,$00,$00
+
+; silences the audio channels
+audio_silence
+	LDA #$B0
+	STA aud_pul2_ctrl
+	LDA #$00
+	STA aud_tri_ctrl
+	LDA #$10
+	STA aud_nois_ctrl
+	RTS
+
+; pauses the audio channels
+audio_pause
+	JSR audio_silence
+	LDA #$01
+	STA aud_halt
+	RTS
+
+; unpauses the audio channels
+audio_unpause
+	LDA #$00
+	STA aud_halt
+	RTS
+
+; starts audio channel once setup
+; uses A to determine which song to start
+audio_start
+	; audio song information
+	STA aud_curr
+	CMP #$00
+	BNE @skip_song2
+
+	; song 1
+	LDA #<audio_song1_pulse2_data
+	STA aud_low_2
+	LDA #>audio_song1_pulse2_data
+	STA aud_high_2
+	LDA #<audio_song1_triangle_data
+	STA aud_low_t
+	LDA #>audio_song1_triangle_data
+	STA aud_high_t
+	LDA #<audio_song1_noise_data
+	STA aud_low_n
+	LDA #>audio_song1_noise_data
+	STA aud_high_n
+	JMP @setup
+
+@skip_song2
+	CMP #$01
+	BNE @skip_song3
+	
+	; song 2
+	LDA #<audio_song2_pulse2_data
+	STA aud_low_2
+	LDA #>audio_song2_pulse2_data
+	STA aud_high_2
+	LDA #<audio_song2_triangle_data
+	STA aud_low_t
+	LDA #>audio_song2_triangle_data
+	STA aud_high_t
+	LDA #<audio_song2_noise_data
+	STA aud_low_n
+	LDA #>audio_song2_noise_data
+	STA aud_high_n
+	JMP @setup
+
+@skip_song3
+	CMP #$02
+	BNE @skip_song4
+
+	; song 3
+	LDA #<audio_song3_pulse2_data
+	STA aud_low_2
+	LDA #>audio_song3_pulse2_data
+	STA aud_high_2
+	LDA #<audio_song3_triangle_data
+	STA aud_low_t
+	LDA #>audio_song3_triangle_data
+	STA aud_high_t
+	LDA #<audio_song3_noise_data
+	STA aud_low_n
+	LDA #>audio_song3_noise_data
+	STA aud_high_n
+	JMP @setup
+	
+@skip_song4
+	CMP #$03
+	BNE @skip_song5
+
+	; song 4
+	LDA #<audio_song4_pulse2_data
+	STA aud_low_2
+	LDA #>audio_song4_pulse2_data
+	STA aud_high_2
+	LDA #<audio_song4_triangle_data
+	STA aud_low_t
+	LDA #>audio_song4_triangle_data
+	STA aud_high_t
+	LDA #<audio_song4_noise_data
+	STA aud_low_n
+	LDA #>audio_song4_noise_data
+	STA aud_high_n
+	JMP @setup
+
+@skip_song5
+	CMP #$04
+	BNE @skip_song6
+
+	; song 5
+	LDA #<audio_song5_pulse2_data
+	STA aud_low_2
+	LDA #>audio_song5_pulse2_data
+	STA aud_high_2
+	LDA #<audio_song5_triangle_data
+	STA aud_low_t
+	LDA #>audio_song5_triangle_data
+	STA aud_high_t
+	LDA #<audio_song5_noise_data
+	STA aud_low_n
+	LDA #>audio_song5_noise_data
+	STA aud_high_n
+	JMP @setup
+
+@skip_song6
+	CMP #$05
+	BNE @skip_debug
+
+	; song 6
+	LDA #<audio_song6_pulse2_data
+	STA aud_low_2
+	LDA #>audio_song6_pulse2_data
+	STA aud_high_2
+	LDA #<audio_song6_triangle_data
+	STA aud_low_t
+	LDA #>audio_song6_triangle_data
+	STA aud_high_t
+	LDA #<audio_song6_noise_data
+	STA aud_low_n
+	LDA #>audio_song6_noise_data
+	STA aud_high_n
+	JMP @setup
+
+@skip_debug
+
+	; debug audio
+	;LDA #<audio_pulse2_data
+	;STA aud_low_2
+	;LDA #>audio_pulse2_data
+	;STA aud_high_2
+	;LDA #<audio_triangle_data
+	;STA aud_low_t
+	;LDA #>audio_triangle_data
+	;STA aud_high_t
+	;LDA #<audio_noise_data
+	;STA aud_low_n
+	;LDA #>audio_noise_data
+	;STA aud_high_n
+
+@setup
+	; set repeat and multiplier
+	LDA #$00
+	STA aud_halt
+	LDA #$00
+	STA aud_once
+	LDA #$03
+	STA aud_mul
+
+	; set up pulse 2 and triangle channels
+	LDA #$00 ; disable sweep
+	STA aud_pul2_sweep
+	
+	LDA #$88 ; length of $10, high timer of $00
+	STA aud_pul2_len
+	STA aud_tri_len
+	LDA #$00
+	STA aud_nois_len
+	LDA #$00 ; low timer of $00
+	STA aud_pul2_timer
+	STA aud_tri_timer
+	STA aud_nois_timer
+	LDA #$B0 ; half duty, constant, no volume yet
+	STA aud_pul2_ctrl
+	LDA #$FF ; enable (volume not controlled)
+	STA aud_tri_ctrl
+	LDA #$10 ; constant, no volume yet
+	STA aud_nois_ctrl
+
+	; reset audio counter
+	LDA #$01
+	STA aud_cnt_low_2
+	STA aud_cnt_low_t
+	STA aud_cnt_low_n
+	LDA #$00
+	STA aud_cnt_high_2
+	STA aud_cnt_high_t
+	STA aud_cnt_high_n
+
+	RTS
+
+; required in loop after NMI
+audio_play
+	; check if halted
+	LDA aud_halt
+	BNE audio_play_exit
+
+	; play audio channels
+	JSR audio_play_pulse2
+	JSR audio_play_triangle
+	JSR audio_play_noise
+
+audio_play_exit
+	RTS
+	
+
+audio_play_pulse2
+	; decrement audio counter
+	DEC aud_cnt_low_2
+	LDA aud_cnt_low_2
+	CMP #$FF
+	BNE @short
+	DEC aud_cnt_high_2
+@short
+	
+	; branch if needed
+	LDA aud_cnt_high_2
+	BNE @exit
+	LDA aud_cnt_low_2
+	CMP #$02
+	BCS @exit
+	
+	; silence channel
+	LDA #$B0
+	STA aud_pul2_ctrl
+
+	; if zero continue
+	LDA aud_cnt_low_2
+	BNE @exit
+
+	; grab audio note
+	JSR aud_func_2
+	CMP #$FF
+	BEQ @check
+
+	; grab audio counter
+	TAX
+	JSR aud_func_2
+	CMP #$FF
+	BEQ @check
+
+	; store audio counter
+	STA math_slot0
+	LDY #$00
+	STY aud_cnt_high_2
+	LDY aud_mul
+@multiply
+	DEY
+	BEQ @store
+	CLC
+	ADC math_slot0
+	BCC @multiply
+	INC aud_cnt_high_2
+	BNE @multiply
+@store
+	STA aud_cnt_low_2
+
+	; keep channel silent if $00
+	CPX #$00
+	BEQ @exit
+
+	; set note frequency
+	LDA audio_period_data_low,X
+	STA aud_pul2_timer
+	LDA audio_period_data_high,X
+	ORA #$80 ; sixteenth note length
+	STA aud_pul2_len
+
+	; unsilence channel
+	LDA #$BF
+	STA aud_pul2_ctrl
+	BNE @exit
+
+@check
+	; check for repeat
+	LDA aud_once
+	STA aud_halt
+	BEQ @repeat
+
+	; silence channel
+	JSR audio_silence
+	JMP @exit
+
+@repeat
+	; reload current song
+	LDA aud_curr
+	JSR audio_start
+	
+@exit
+	RTS
+
+
+audio_play_triangle
+	; decrement audio counter
+	DEC aud_cnt_low_t
+	LDA aud_cnt_low_t
+	CMP #$FF
+	BNE @short
+	DEC aud_cnt_high_t
+@short
+	
+	; branch if needed
+	LDA aud_cnt_high_t
+	BNE @exit
+	LDA aud_cnt_low_t
+	CMP #$02
+	BCS @exit
+	
+	; silence channel
+	LDA #$00
+	STA aud_tri_ctrl
+
+	; if zero continue
+	LDA aud_cnt_low_t
+	BNE @exit
+
+	; grab audio note
+	JSR aud_func_t
+	CMP #$FF
+	BEQ @check
+
+	; grab audio counter
+	TAX
+	JSR aud_func_t
+	CMP #$FF
+	BEQ @check
+
+	; store audio counter
+	STA math_slot0
+	LDY #$00
+	STY aud_cnt_high_t
+	LDY aud_mul
+@multiply
+	DEY
+	BEQ @store
+	CLC
+	ADC math_slot0
+	BCC @multiply
+	INC aud_cnt_high_t
+	BNE @multiply
+@store
+	STA aud_cnt_low_t
+
+	; keep channel silent if $00
+	CPX #$00
+	BEQ @exit
+
+	; set note frequency
+	LDA audio_period_data_low,X
+	STA aud_tri_timer
+	LDA audio_period_data_high,X
+	ORA #$80 ; sixteenth note length
+	STA aud_tri_len
+
+	; unsilence channel
+	LDA #$FF
+	STA aud_tri_ctrl
+	BNE @exit
+
+@check
+	; check for repeat
+	LDA aud_once
+	STA aud_halt
+	BEQ @repeat
+
+	; silence channel
+	JSR audio_silence
+	JMP @exit
+
+@repeat
+	; reload current song
+	LDA aud_curr
+	JSR audio_start
+
+@exit
+	RTS
+
+
+audio_play_noise
+	; decrement audio counter
+	DEC aud_cnt_low_n
+	LDA aud_cnt_low_n
+	CMP #$FF
+	BNE @short
+	DEC aud_cnt_high_n
+@short
+	
+	; branch if needed
+	LDA aud_cnt_high_n
+	BNE @exit
+	LDA aud_cnt_low_n
+	CMP #$02
+	BCS @exit
+	
+	; silence channel
+	LDA #$00
+	STA aud_nois_ctrl
+
+	; if zero continue
+	LDA aud_cnt_low_n
+	BNE @exit
+
+	; grab audio note
+	JSR aud_func_n
+	CMP #$FF
+	BEQ @check
+
+	; grab audio counter
+	TAX
+	JSR aud_func_n
+	CMP #$FF
+	BEQ @check
+
+	; store audio counter
+	STA math_slot0
+	LDY #$00
+	STY aud_cnt_high_n
+	LDY aud_mul
+@multiply
+	DEY
+	BEQ @store
+	CLC
+	ADC math_slot0
+	BCC @multiply
+	INC aud_cnt_high_n
+	BNE @multiply
+@store
+	STA aud_cnt_low_n
+
+	; keep channel silent if $0F
+	CPX #$0F
+	BEQ @exit
+
+	; set note frequency
+	STX aud_nois_timer
+	LDA #$80 ; sixteenth note length
+	STA aud_nois_len
+
+	; unsilence channel
+	LDA #$3F
+	STA aud_nois_ctrl
+	BNE @exit
+
+@check
+	; check for repeat
+	LDA aud_once
+	STA aud_halt
+	BEQ @repeat
+
+	; silence channel
+	JSR audio_silence
+	JMP @exit
+
+@repeat
+	; reload current song
+	LDA aud_curr
+	JSR audio_start
+
+@exit
+	RTS
+
+; used to test the audio without any game
+audio_debug
+	; initialize audio
+	JSR audio_init
+
+	; use debug audio
+	LDA #$FF
+
+	; start audio
+	JSR audio_start
+
+	; turn NMI on
+	LDA #$90
+	STA ppu_ctrl
+
+	; clear v-blank flag
+	LDA #$00
+	STA vblank_ready
+
+@loop
+	; wait for v-blank flag
+	LDA vblank_ready
+	BEQ @loop
+
+	; clear v-blank flag
+	LDA #$00
+	STA vblank_ready
+
+	; play audio
+	JSR audio_play
+
+	; always go back to loop
+	JMP @loop
+
+
+; goes from $00 to $7F
+audio_period_data_low
+	.BYTE $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	.BYTE $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	.BYTE $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	.BYTE $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	.BYTE $FF, $F1, $7F, $13, $AD, $4D, $F3, $9D
+	.BYTE $4C, $00, $B8, $74, $34, $F8, $BF, $89
+	.BYTE $56, $26, $F9, $CE, $A6, $80, $5C, $3A
+	.BYTE $1A, $FB, $DF, $C4, $AB, $93, $7C, $67
+	.BYTE $52, $3F, $2D, $1C, $0C, $FD, $EF, $E1
+	.BYTE $D5, $C9, $BD, $B3, $A9, $9F, $96, $8E
+	.BYTE $86, $7E, $77, $70, $6A, $64, $5E, $59
+	.BYTE $54, $4F, $4B, $46, $42, $3F, $3B, $38
+	.BYTE $34, $31, $2F, $2C, $29, $27, $25, $23
+	.BYTE $21, $1F, $1D, $1B, $1A, $18, $17, $15
+	.BYTE $14, $13, $12, $11, $10, $0F, $0E, $0D
+	.BYTE $0C, $0C, $0B, $0A, $0A, $09, $08, $08
+
+; goes from $00 to $7F
+audio_period_data_high
+	.BYTE $07, $07, $07, $07, $07, $07, $07, $07
+	.BYTE $07, $07, $07, $07, $07, $07, $07, $07
+	.BYTE $07, $07, $07, $07, $07, $07, $07, $07
+	.BYTE $07, $07, $07, $07, $07, $07, $07, $07
+	.BYTE $07, $07, $07, $07, $06, $06, $05, $05
+	.BYTE $05, $05, $04, $04, $04, $03, $03, $03
+	.BYTE $03, $03, $02, $02, $02, $02, $02, $02
+	.BYTE $02, $01, $01, $01, $01, $01, $01, $01
+	.BYTE $01, $01, $01, $01, $01, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+	.BYTE $00, $00, $00, $00, $00, $00, $00, $00
+
+;audio_pulse2_data
+	;.BYTE $00,$C0,$00,$C0,$00,$C0,$00,$C0
+	;.BYTE $00,$C0,$00,$C0,$00,$C0,$00,$C0
+	;.BYTE $FF,$FF ; end with two $FF
+
+;audio_triangle_data
+	;.BYTE $00,$C0,$00,$C0,$00,$C0,$00,$C0
+	;.BYTE $00,$C0,$00,$C0,$00,$C0,$00,$C0
+	;.BYTE $FF,$FF ; end with two $FF
+
+;audio_noise_data
+	;.BYTE $0F,$C0,$0F,$C0,$0F,$C0,$0F,$C0
+	;.BYTE $0F,$C0,$0F,$C0,$0F,$C0,$0F,$C0
+	;.BYTE $FF,$FF ; end with two $FF
+
+
+audio_song1_pulse2_data
+	.BYTE $00,$01,$45,$01,$00,$01,$47,$01
+	.BYTE $00,$01,$48,$03,$00,$05,$4D,$01
+	.BYTE $00,$01,$4A,$01,$00,$01,$4C,$03
+	.BYTE $00,$05,$48,$03,$00,$01,$4C,$03
+	.BYTE $00,$01,$54,$07,$00,$05,$53,$01
+	.BYTE $00,$01,$51,$01,$00,$01,$4F,$03
+	.BYTE $00,$05,$56,$03,$00,$01,$58,$03
+	.BYTE $00,$01,$54,$07,$00,$05,$51,$01
+	.BYTE $00,$01,$4D,$01,$00,$01,$48,$03
+	.BYTE $00,$05,$4A,$03,$00,$01,$4C,$03
+	.BYTE $00,$01,$48,$03,$00,$01,$48,$03
+	.BYTE $00,$01,$48,$03,$00,$01,$4C,$01
+	.BYTE $00,$01,$4F,$01,$00,$01,$54,$07
+	.BYTE $00,$09,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song1_triangle_data
+	.BYTE $00,$01,$3C,$08,$00,$08,$40,$08
+	.BYTE $00,$08,$48,$08,$00,$08,$43,$08
+	.BYTE $00,$08,$48,$08,$00,$08,$3C,$08
+	.BYTE $00,$08,$3C,$08,$00,$08,$48,$08
+	.BYTE $00,$08,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song1_noise_data
+	.BYTE $0F,$09,$02,$02,$0F,$0E,$02,$02
+	.BYTE $0F,$0E,$02,$02,$0F,$0E,$02,$02
+	.BYTE $0F,$0E,$02,$02,$0F,$0E,$02,$02
+	.BYTE $0F,$0E,$02,$02,$0F,$0E,$02,$02
+	.BYTE $0F,$06,$FF,$FF,$FF,$FF,$FF,$FF
+
+audio_song2_pulse2_data
+	.BYTE $00,$01,$54,$03,$00,$01,$54,$03
+	.BYTE $00,$05,$53,$01,$00,$01,$56,$01
+	.BYTE $00,$01,$54,$03,$00,$05,$54,$03
+	.BYTE $00,$01,$56,$03,$00,$01,$58,$03
+	.BYTE $00,$01,$58,$03,$00,$05,$59,$01
+	.BYTE $00,$01,$5B,$01,$00,$01,$58,$03
+	.BYTE $00,$09,$5B,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$54,$03,$00,$01,$54,$03
+	.BYTE $00,$01,$56,$03,$00,$01,$53,$03
+	.BYTE $00,$01,$54,$03,$00,$09,$4F,$01
+	.BYTE $00,$01,$53,$01,$00,$01,$5B,$03
+	.BYTE $00,$01,$5B,$03,$00,$05,$4F,$01
+	.BYTE $00,$01,$53,$01,$00,$01,$5B,$03
+	.BYTE $00,$05,$58,$01,$00,$01,$54,$01
+	.BYTE $00,$05,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song2_triangle_data
+	.BYTE $00,$01,$60,$08,$00,$08,$60,$08
+	.BYTE $00,$08,$64,$08,$00,$08,$64,$08
+	.BYTE $00,$08,$60,$08,$00,$08,$60,$08
+	.BYTE $00,$08,$67,$08,$00,$08,$67,$08
+	.BYTE $00,$08,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song2_noise_data
+	.BYTE $0F,$11,$02,$03,$0F,$01,$02,$03
+	.BYTE $0F,$19,$02,$03,$0F,$01,$02,$03
+	.BYTE $0F,$19,$02,$03,$0F,$01,$02,$03
+	.BYTE $0F,$19,$02,$03,$0F,$01,$02,$03
+	.BYTE $0F,$09,$FF,$FF,$FF,$FF,$FF,$FF
+
+audio_song3_pulse2_data
+	.BYTE $00,$01,$48,$03,$00,$01,$48,$03
+	.BYTE $00,$01,$41,$01,$00,$01,$40,$01
+	.BYTE $00,$01,$43,$03,$00,$01,$48,$01
+	.BYTE $00,$01,$4A,$01,$00,$01,$4C,$03
+	.BYTE $00,$01,$4A,$01,$00,$01,$4C,$01
+	.BYTE $00,$01,$48,$03,$00,$01,$47,$01
+	.BYTE $00,$01,$45,$01,$00,$01,$43,$03
+	.BYTE $00,$01,$3E,$01,$00,$01,$3B,$01
+	.BYTE $00,$01,$3C,$03,$00,$01,$48,$03
+	.BYTE $00,$01,$48,$03,$00,$01,$41,$01
+	.BYTE $00,$01,$40,$01,$00,$01,$43,$03
+	.BYTE $00,$01,$48,$01,$00,$01,$4A,$01
+	.BYTE $00,$01,$4C,$03,$00,$01,$4A,$01
+	.BYTE $00,$01,$4C,$01,$00,$01,$48,$03
+	.BYTE $00,$01,$48,$01,$00,$01,$4A,$01
+	.BYTE $00,$01,$4C,$03,$00,$01,$48,$01
+	.BYTE $00,$01,$4C,$01,$00,$01,$54,$03
+	.BYTE $00,$01,$48,$03,$00,$01,$48,$03
+	.BYTE $00,$01,$41,$01,$00,$01,$40,$01
+	.BYTE $00,$01,$43,$03,$00,$01,$48,$01
+	.BYTE $00,$01,$4A,$01,$00,$01,$4C,$03
+	.BYTE $00,$01,$48,$01,$00,$01,$4C,$01
+	.BYTE $00,$01,$54,$03,$00,$01,$56,$01
+	.BYTE $00,$01,$59,$01,$00,$01,$58,$03
+	.BYTE $00,$01,$58,$01,$00,$01,$56,$01
+	.BYTE $00,$01,$54,$03,$00,$01,$48,$03
+	.BYTE $00,$01,$48,$03,$00,$01,$4D,$01
+	.BYTE $00,$01,$4C,$01,$00,$01,$4F,$03
+	.BYTE $00,$01,$56,$01,$00,$01,$59,$01
+	.BYTE $00,$01,$58,$03,$00,$01,$58,$01
+	.BYTE $00,$01,$56,$01,$00,$01,$54,$03
+	.BYTE $00,$01,$59,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$5B,$03,$00,$01,$54,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$60,$03
+	.BYTE $00,$01,$54,$03,$00,$01,$54,$03
+	.BYTE $00,$01,$4D,$01,$00,$01,$4C,$01
+	.BYTE $00,$01,$4F,$03,$00,$01,$56,$01
+	.BYTE $00,$01,$59,$01,$00,$01,$58,$03
+	.BYTE $00,$01,$58,$01,$00,$01,$56,$01
+	.BYTE $00,$01,$54,$03,$00,$01,$4D,$01
+	.BYTE $00,$01,$4C,$01,$00,$01,$4F,$03
+	.BYTE $00,$01,$4A,$01,$00,$01,$47,$01
+	.BYTE $00,$01,$48,$03,$00,$01,$48,$01
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$48,$01,$00,$01,$FF,$FF
+audio_song3_triangle_data
+	.BYTE $00,$01,$3C,$07,$00,$01,$37,$07
+	.BYTE $00,$01,$40,$07,$00,$01,$3C,$07
+	.BYTE $00,$01,$37,$07,$00,$01,$30,$07
+	.BYTE $00,$01,$3C,$07,$00,$01,$37,$07
+	.BYTE $00,$01,$40,$07,$00,$01,$3C,$07
+	.BYTE $00,$01,$40,$07,$00,$01,$48,$07
+	.BYTE $00,$01,$3C,$07,$00,$01,$37,$07
+	.BYTE $00,$01,$40,$07,$00,$01,$48,$07
+	.BYTE $00,$01,$4C,$07,$00,$01,$48,$07
+	.BYTE $00,$01,$3C,$07,$00,$01,$43,$07
+	.BYTE $00,$01,$4C,$07,$00,$01,$48,$07
+	.BYTE $00,$01,$4F,$07,$00,$01,$54,$07
+	.BYTE $00,$01,$48,$07,$00,$01,$43,$07
+	.BYTE $00,$01,$4C,$07,$00,$01,$48,$07
+	.BYTE $00,$01,$43,$07,$00,$01,$3C,$07
+	.BYTE $00,$01,$3C,$03,$00,$01,$3C,$03
+	.BYTE $00,$01,$3C,$03,$00,$01,$3C,$03
+	.BYTE $00,$01,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song3_noise_data
+	.BYTE $0F,$01,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$07,$01,$01
+	.BYTE $0F,$07,$04,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$01,$01,$0F,$03,$01,$01
+	.BYTE $0F,$03,$04,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$01,$01,$0F,$03,$01,$01
+	.BYTE $0F,$03,$04,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$01,$01,$0F,$03,$01,$01
+	.BYTE $0F,$03,$FF,$FF,$FF,$FF,$FF,$FF
+
+audio_song4_pulse2_data
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$4F,$03,$00,$01,$54,$03
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$05,$58,$01,$00,$01,$56,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$51,$03,$00,$01,$53,$03
+	.BYTE $00,$01,$4F,$01,$00,$01,$4F,$01
+	.BYTE $00,$01,$4F,$01,$00,$01,$4F,$01
+	.BYTE $00,$01,$53,$03,$00,$01,$56,$03
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$4F,$03,$00,$01,$54,$03
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$5B,$03,$00,$01,$5B,$03
+	.BYTE $00,$05,$59,$01,$00,$01,$5B,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$05,$56,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$4F,$03,$00,$01,$4C,$03
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$4D,$03,$00,$01,$4A,$03
+	.BYTE $00,$01,$4C,$01,$00,$01,$4C,$01
+	.BYTE $00,$01,$4C,$01,$00,$01,$4C,$01
+	.BYTE $00,$01,$4C,$03,$00,$01,$4A,$03
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$48,$01,$00,$01,$48,$01
+	.BYTE $00,$01,$4C,$03,$00,$01,$4F,$03
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$05,$54,$01,$00,$01,$56,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$05,$51,$01,$00,$01,$4D,$01
+	.BYTE $00,$01,$4F,$01,$00,$01,$4F,$01
+	.BYTE $00,$01,$4F,$01,$00,$01,$4F,$01
+	.BYTE $00,$01,$53,$03,$00,$01,$51,$03
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$09,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song4_triangle_data
+	.BYTE $00,$01,$48,$08,$4F,$03,$00,$01
+	.BYTE $54,$03,$00,$01,$4C,$08,$00,$04
+	.BYTE $58,$01,$00,$01,$56,$01,$00,$01
+	.BYTE $48,$08,$51,$03,$00,$01,$53,$03
+	.BYTE $00,$01,$43,$08,$53,$03,$00,$01
+	.BYTE $56,$03,$00,$01,$48,$08,$4F,$03
+	.BYTE $00,$01,$54,$03,$00,$01,$4C,$08
+	.BYTE $54,$01,$00,$01,$54,$01,$00,$01
+	.BYTE $58,$01,$00,$01,$58,$01,$00,$01
+	.BYTE $4F,$08,$00,$04,$59,$01,$00,$01
+	.BYTE $5B,$01,$00,$01,$4C,$08,$00,$04
+	.BYTE $56,$01,$00,$01,$58,$01,$00,$01
+	.BYTE $48,$08,$4C,$03,$00,$01,$48,$03
+	.BYTE $00,$01,$3C,$08,$4A,$03,$00,$01
+	.BYTE $47,$03,$00,$01,$40,$08,$48,$03
+	.BYTE $00,$01,$47,$03,$00,$01,$3C,$08
+	.BYTE $48,$03,$00,$01,$4C,$03,$00,$01
+	.BYTE $48,$08,$00,$04,$51,$01,$00,$01
+	.BYTE $53,$01,$00,$01,$4C,$08,$00,$04
+	.BYTE $4D,$01,$00,$01,$4A,$01,$00,$01
+	.BYTE $43,$08,$4F,$03,$00,$01,$4D,$03
+	.BYTE $00,$01,$48,$08,$00,$08,$FF,$FF
+audio_song4_noise_data
+	.BYTE $0F,$01,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$07,$03,$01
+	.BYTE $0F,$07,$03,$01,$0F,$03,$03,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$03,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$03,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$03,$01
+	.BYTE $0F,$03,$FF,$FF,$FF,$FF,$FF,$FF
+
+audio_song5_pulse2_data
+	.BYTE $00,$01,$6C,$03,$00,$01,$6C,$01
+	.BYTE $00,$01,$6C,$01,$00,$01,$69,$01
+	.BYTE $00,$01,$65,$01,$00,$01,$67,$03
+	.BYTE $00,$01,$6C,$01,$00,$01,$6C,$01
+	.BYTE $00,$01,$6C,$03,$00,$01,$67,$01
+	.BYTE $00,$01,$65,$01,$00,$01,$64,$03
+	.BYTE $00,$01,$6B,$03,$00,$01,$6B,$01
+	.BYTE $00,$01,$6B,$01,$00,$01,$62,$01
+	.BYTE $00,$01,$64,$01,$00,$01,$65,$03
+	.BYTE $00,$01,$6B,$01,$00,$01,$6B,$01
+	.BYTE $00,$01,$6B,$03,$00,$01,$64,$01
+	.BYTE $00,$01,$65,$01,$00,$01,$62,$03
+	.BYTE $00,$01,$69,$03,$00,$01,$69,$01
+	.BYTE $00,$01,$69,$01,$00,$01,$65,$01
+	.BYTE $00,$01,$62,$01,$00,$01,$64,$03
+	.BYTE $00,$01,$69,$01,$00,$01,$69,$01
+	.BYTE $00,$01,$69,$03,$00,$01,$64,$01
+	.BYTE $00,$01,$62,$01,$00,$01,$60,$04
+	.BYTE $64,$03,$00,$01,$64,$01,$00,$01
+	.BYTE $64,$01,$00,$01,$60,$01,$00,$01
+	.BYTE $64,$01,$00,$01,$67,$03,$00,$01
+	.BYTE $6C,$07,$00,$01,$60,$01,$00,$01
+	.BYTE $60,$01,$00,$01,$60,$01,$00,$01
+	.BYTE $60,$01,$00,$01,$64,$07,$00,$01
+	.BYTE $64,$01,$00,$01,$62,$01,$00,$01
+	.BYTE $60,$03,$00,$01,$64,$07,$00,$01
+	.BYTE $64,$01,$00,$01,$65,$01,$00,$01
+	.BYTE $67,$03,$00,$01,$65,$07,$00,$01
+	.BYTE $64,$01,$00,$01,$60,$01,$00,$01
+	.BYTE $62,$03,$00,$01,$65,$07,$00,$01
+	.BYTE $6B,$01,$00,$01,$6C,$01,$00,$01
+	.BYTE $69,$03,$00,$01,$67,$07,$00,$01
+	.BYTE $60,$01,$00,$01,$62,$01,$00,$01
+	.BYTE $64,$03,$00,$01,$67,$07,$00,$01
+	.BYTE $6C,$01,$00,$01,$69,$01,$00,$01
+	.BYTE $6B,$03,$00,$01,$6C,$07,$00,$01
+	.BYTE $6B,$01,$00,$01,$69,$01,$00,$01
+	.BYTE $67,$03,$00,$01,$64,$07,$00,$01
+	.BYTE $64,$01,$00,$01,$62,$01,$00,$01
+	.BYTE $60,$03,$00,$01,$FF,$FF,$FF,$FF
+audio_song5_triangle_data
+	.BYTE $00,$01,$60,$03,$00,$01,$60,$01
+	.BYTE $00,$01,$60,$01,$00,$01,$5B,$03
+	.BYTE $00,$01,$5B,$03,$00,$01,$60,$01
+	.BYTE $00,$01,$60,$01,$00,$01,$60,$03
+	.BYTE $00,$01,$58,$03,$00,$01,$58,$03
+	.BYTE $00,$01,$5F,$03,$00,$01,$5F,$01
+	.BYTE $00,$01,$5F,$01,$00,$01,$59,$03
+	.BYTE $00,$01,$59,$03,$00,$01,$5F,$01
+	.BYTE $00,$01,$5F,$01,$00,$01,$5F,$03
+	.BYTE $00,$01,$56,$03,$00,$01,$56,$03
+	.BYTE $00,$01,$5D,$03,$00,$01,$5D,$01
+	.BYTE $00,$01,$5D,$01,$00,$01,$58,$03
+	.BYTE $00,$01,$58,$03,$00,$01,$5D,$01
+	.BYTE $00,$01,$5D,$01,$00,$01,$5D,$03
+	.BYTE $00,$01,$54,$03,$00,$01,$54,$03
+	.BYTE $00,$01,$58,$03,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$5B,$03
+	.BYTE $00,$01,$5B,$03,$00,$01,$60,$07
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$58,$07,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$54,$01
+	.BYTE $00,$01,$54,$01,$00,$01,$58,$07
+	.BYTE $00,$01,$5B,$01,$00,$01,$5B,$01
+	.BYTE $00,$01,$5B,$01,$00,$01,$5B,$01
+	.BYTE $00,$01,$59,$07,$00,$01,$56,$01
+	.BYTE $00,$01,$56,$01,$00,$01,$56,$01
+	.BYTE $00,$01,$56,$01,$00,$01,$59,$07
+	.BYTE $00,$01,$5D,$01,$00,$01,$5D,$01
+	.BYTE $00,$01,$5D,$01,$00,$01,$5D,$01
+	.BYTE $00,$01,$5B,$07,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$58,$01
+	.BYTE $00,$01,$58,$01,$00,$01,$5B,$07
+	.BYTE $00,$01,$5D,$01,$00,$01,$5D,$01
+	.BYTE $00,$01,$5D,$01,$00,$01,$5D,$01
+	.BYTE $00,$01,$60,$07,$00,$01,$5B,$03
+	.BYTE $00,$01,$5B,$03,$00,$01,$58,$07
+	.BYTE $00,$01,$54,$03,$00,$01,$54,$03
+	.BYTE $00,$01,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song5_noise_data
+	.BYTE $0F,$01,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$03,$01,$0F,$03,$00,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$04,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$07,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$07,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$07,$01
+	.BYTE $0F,$03,$07,$01,$0F,$03,$07,$01
+	.BYTE $0F,$03,$FF,$FF,$FF,$FF,$FF,$FF
+
+audio_song6_pulse2_data
+	.BYTE $00,$01,$30,$07,$00,$01,$30,$07
+	.BYTE $00,$01,$32,$03,$00,$01,$34,$03
+	.BYTE $00,$01,$30,$07,$00,$01,$32,$03
+	.BYTE $00,$01,$34,$03,$00,$01,$34,$01
+	.BYTE $00,$01,$35,$01,$00,$01,$37,$03
+	.BYTE $00,$01,$3C,$07,$00,$01,$37,$01
+	.BYTE $00,$01,$34,$01,$00,$01,$30,$03
+	.BYTE $00,$01,$32,$07,$00,$01,$32,$07
+	.BYTE $00,$01,$34,$03,$00,$01,$35,$03
+	.BYTE $00,$01,$32,$07,$00,$01,$34,$03
+	.BYTE $00,$01,$35,$03,$00,$01,$35,$01
+	.BYTE $00,$01,$37,$01,$00,$01,$39,$03
+	.BYTE $00,$01,$3E,$07,$00,$01,$39,$01
+	.BYTE $00,$01,$35,$01,$00,$01,$32,$03
+	.BYTE $00,$01,$34,$07,$00,$01,$34,$07
+	.BYTE $00,$01,$37,$03,$00,$01,$37,$03
+	.BYTE $00,$01,$34,$07,$00,$01,$37,$03
+	.BYTE $00,$01,$37,$03,$00,$01,$37,$01
+	.BYTE $00,$01,$39,$01,$00,$01,$3B,$03
+	.BYTE $00,$01,$40,$07,$00,$01,$3E,$01
+	.BYTE $00,$01,$3C,$01,$00,$01,$40,$03
+	.BYTE $00,$01,$3C,$07,$00,$01,$39,$01
+	.BYTE $00,$01,$35,$01,$00,$01,$37,$03
+	.BYTE $00,$01,$3C,$07,$00,$01,$3B,$01
+	.BYTE $00,$01,$39,$01,$00,$01,$37,$03
+	.BYTE $00,$01,$35,$01,$00,$01,$32,$01
+	.BYTE $00,$01,$34,$03,$00,$01,$30,$07
+	.BYTE $00,$01,$35,$01,$00,$01,$37,$01
+	.BYTE $00,$01,$34,$03,$00,$01,$30,$07
+	.BYTE $00,$01,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song6_triangle_data
+	.BYTE $00,$01,$30,$07,$00,$01,$30,$07
+	.BYTE $00,$05,$40,$03,$00,$01,$30,$07
+	.BYTE $00,$05,$40,$03,$00,$05,$43,$03
+	.BYTE $00,$01,$3C,$07,$00,$05,$3C,$03
+	.BYTE $00,$01,$32,$07,$00,$01,$32,$07
+	.BYTE $00,$05,$41,$03,$00,$01,$32,$07
+	.BYTE $00,$05,$41,$03,$00,$05,$45,$03
+	.BYTE $00,$01,$3E,$07,$00,$05,$3E,$03
+	.BYTE $00,$01,$34,$07,$00,$01,$34,$07
+	.BYTE $00,$05,$43,$03,$00,$01,$34,$07
+	.BYTE $00,$05,$43,$03,$00,$05,$47,$03
+	.BYTE $00,$01,$40,$07,$00,$05,$47,$03
+	.BYTE $00,$01,$3C,$07,$00,$05,$43,$03
+	.BYTE $00,$01,$3C,$07,$00,$05,$43,$03
+	.BYTE $00,$05,$40,$03,$00,$01,$30,$07
+	.BYTE $00,$05,$40,$03,$00,$01,$30,$07
+	.BYTE $00,$01,$FF,$FF,$FF,$FF,$FF,$FF
+audio_song6_noise_data
+	.BYTE $0F,$01,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$0F,$0C,$01
+	.BYTE $0F,$0F,$0C,$01,$0F,$03,$0C,$01
+	.BYTE $0F,$03,$0C,$01,$0F,$03,$0C,$01
+	.BYTE $0F,$03,$0C,$01,$0F,$03,$0C,$01
+	.BYTE $0F,$03,$0C,$01,$0F,$03,$0C,$01
+	.BYTE $0F,$03,$FF,$FF,$FF,$FF,$FF,$FF
+
+
+; play sound effect on pulse1 channel
+; uses A to determine which effect to start
+sound
+	PHA
+
+	; only proceed if sound effects counter is zero
+	LDA aud_sfx
+	BEQ @continue
+	PLA
+	RTS
+
+@continue
+	PLA
+	CMP #$00
+	BNE @skip_sound2
+
+	; sound effects counter
+	LDA #$3C
+	STA aud_sfx 
+
+	; turn on pulse1 channel
+	LDA #$0F
+	STA aud_status
+
+	; sound effect 1 - warp
+	LDA #$A3 ; half duty, envelope, full volume
+	STA aud_pul1_ctrl
+	LDA #$9F ; sweep, period, direction, shift
+	STA aud_pul1_sweep
+	LDA #$D5 ; low timer frequency
+	STA aud_pul1_timer
+	LDA #$F8 ; high timer frequency, length counter
+	STA aud_pul1_len
+
+	RTS
+
+@skip_sound2
+	CMP #$01
+	BNE @skip_sound3
+
+	; sound effects counter
+	LDA #$2C
+	STA aud_sfx
+
+	; turn on pulse1 channel
+	LDA #$0F
+	STA aud_status
+
+	; sound effect 2 - death
+	LDA #$AF ; half duty, envelope, full volume
+	STA aud_pul1_ctrl
+	LDA #$94 ; sweep, period, direction, shift
+	STA aud_pul1_sweep
+	LDA $AB ; low timer frequency
+	STA aud_pul1_timer
+	LDA #$F9 ; high timer frequency, length counter
+	STA aud_pul1_len
+
+	RTS
+
+@skip_sound3
+	CMP #$02
+	BNE @skip_sound4
+
+	; sound effects counter
+	LDA #$14
+	STA aud_sfx
+
+	; turn on pulse1 channel
+	LDA #$0F
+	STA aud_status
+
+	; sound effect 3 - bounce
+	LDA #$A3 ; half duty, envelope, full volume
+	STA aud_pul1_ctrl
+	LDA #$00 ; sweep, period, direction, shift
+	STA aud_pul1_sweep
+	LDA #$56 ; low timer frequency
+	STA aud_pul1_timer
+	LDA #$7B ; high timer frequency, length counter
+	STA aud_pul1_len	
+
+	RTS
+
+@skip_sound4
+	CMP #$03
+	BNE @skip_sound5
+
+	; sound effects counter
+	LDA #$14
+	STA aud_sfx
+
+	; turn on pulse1 channel
+	LDA #$0F
+	STA aud_status
+
+	; sound effect 4 - stomp
+	LDA #$CF ; half duty, envelope, full volume
+	STA aud_pul1_ctrl
+	LDA #$9F ; sweep, period, direction, shift
+	STA aud_pul1_sweep
+	LDA #$34 ; low timer frequency
+	STA aud_pul1_timer
+	LDA #$78 ; high timer frequency, length counter
+	STA aud_pul1_len	
+
+	RTS
+
+@skip_sound5
+	CMP #$04
+	BNE @skip_sound6
+
+	; sound effects counter
+	LDA #$14
+	STA aud_sfx 
+
+	; turn on pulse1 channel
+	LDA #$0F
+	STA aud_status
+
+	; sound effect 5 - clock
+	LDA #$AF ; half duty, envelope, full volume
+	STA aud_pul1_ctrl
+	LDA #$9A ; sweep, period, direction, shift
+	STA aud_pul1_sweep
+	LDA #$D5 ; low timer frequency
+	STA aud_pul1_timer
+	LDA #$F8 ; high timer frequency, length counter
+	STA aud_pul1_len
+
+	RTS
+
+@skip_sound6
+	CMP #$05
+	BNE @skip_none
+
+	; sound effects counter
+	LDA #$64
+	STA aud_sfx
+
+	; turn on pulse1 channel
+	LDA #$0F
+	STA aud_status
+
+	; sound effect 6 - wipe
+	LDA #$A4 ; half duty, envelope, full volume
+	STA aud_pul1_ctrl
+	LDA #$97 ; sweep, period, direction, shift
+	STA aud_pul1_sweep
+	LDA #$D5 ; low timer frequency
+	STA aud_pul1_timer
+	LDA #$F8 ; high timer frequency, length counter
+	STA aud_pul1_len
+
+	RTS	
+
+@skip_none
+	RTS
+
+; used to test the audio without any game
+sound_debug
+	; initialize audio
+	JSR audio_init
+
+	; silence audio channels
+	JSR audio_silence
+
+	; turn NMI on
+	LDA #$90
+	STA ppu_ctrl
+
+	; clear v-blank flag
+	LDA #$00
+	STA vblank_ready
+
+@loop
+	; wait for v-blank flag
+	LDA vblank_ready
+	BEQ @loop
+
+	; clear v-blank flag
+	LDA #$00
+	STA vblank_ready
+
+	; read buttons
+	JSR buttons
+	
+	; check up button
+	LDA button_value
+	AND #$08 ; up
+	BEQ @button_skip1
+
+	; use sound effect 1
+	LDA #$00
+
+	; start sound effect
+	JSR sound	
+	JMP @loop
+
+@button_skip1
+	; check down button
+	LDA button_value
+	AND #$04 ; down
+	BEQ @button_skip2
+
+	; use sound effect 2
+	LDA #$01
+
+	; start sound effect
+	JSR sound
+	JMP @loop	
+
+@button_skip2
+	; check left button
+	LDA button_value
+	AND #$02 ; left
+	BEQ @button_skip3
+
+	; use sound effect 3
+	LDA #$02
+
+	; start sound effect
+	JSR sound
+	JMP @loop
+
+@button_skip3	
+	; check right button
+	LDA button_value
+	AND #$01 ; right
+	BEQ @button_skip4
+
+	; use sound effect 4
+	LDA #$03
+
+	; start sound effect
+	JSR sound
+	JMP @loop
+
+@button_skip4
+	; check A button
+	LDA button_value
+	AND #$80 ; A
+	BEQ @button_skip5
+
+	; use sound effect 5
+	LDA #$04
+
+	; start sound effect
+	JSR sound
+	JMP @loop
+
+@button_skip5
+	; check B button
+	LDA button_value
+	AND #$40 ; B
+	BEQ @button_skip6
+
+	; use sound effect 6
+	LDA #$05
+
+	; start sound effect
+	JSR sound
+	JMP @loop
+
+@button_skip6
+
+	; always go back to loop
+	JMP @loop
+
+
 ; interrupts
 
 nmi
 	INC vblank_ready
+	PHA
+	LDA aud_sfx
+	BEQ nmi_exit
+	SEC
+	SBC #$01
+	STA aud_sfx
+	BNE nmi_exit
+	LDA #$0E
+	STA aud_status
+nmi_exit
+	PLA
 	RTI
 	
 irq
 	RTI
+
+
+; include for debugging audio
+	
+	;.ORG $C000
+	;.INCSRC TobuNES-Song.asm
+
 
 ; vectors
 
@@ -4543,5 +6089,30 @@ irq
 	.WORD nmi
 	.WORD reset
 	.WORD irq
+
+
+
+
+;	D3, F3, G3, A3, D3, F3, E3, D3, R
+;	2, 4, 2, 4, 2, 2, 4, 4, 2
+
+;	A3, A3, B3, C4, F3, A3, G3, F3, R
+;	2, 2, 2, 4, 2, 2, 4, 4, 2
+
+;	C4, C4, C4, C4, A3, D4, D4, C4, R
+;	2, 2, 2, 4, 2, 4, 2, 4, 2
+
+;	A3, A3, G3, A3, F3, G3, E3, D3, R
+;	2, 2, 2, 4, 2, 2, 4, 4, 2
+
+;	R, R, R, 0
+;	2, 2, 2, 0
+
+;audio_notes_data
+;	.BYTE $32,$35,$35,$37,$39,$39,$32,$35,$34,$34,$32,$32,$00
+;	.BYTE $39,$39,$3B,$3C,$3C,$35,$39,$39,$37,$37,$35,$00
+;	.BYTE $3C,$3C,$3C,$3C,$3C,$39,$3E,$3E,$3E,$3C,$3C,$00
+;	.BYTE $39,$39,$37,$39,$39,$35,$37,$34,$34,$32,$32,$00
+;	.BYTE $00,$00,$00,$FF  
 
 
