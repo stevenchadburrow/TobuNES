@@ -5086,7 +5086,7 @@ audio_play_pulse2
 	STA aud_pul2_len
 
 	; unsilence channel
-	LDA #$BF
+	LDA #$B7
 	STA aud_pul2_ctrl
 	BNE @exit
 
@@ -5256,7 +5256,7 @@ audio_play_noise
 	STA aud_nois_len
 
 	; unsilence channel
-	LDA #$3F
+	LDA #$37
 	STA aud_nois_ctrl
 	BNE @exit
 
